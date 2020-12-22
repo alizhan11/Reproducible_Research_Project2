@@ -1,0 +1,155 @@
+---
+title: "Analysis of events in US with harmful impacts to health and economy"
+author: "Alizhan Tapeyev"
+date: "21 12 2020"
+output: html_document
+---
+GitHub repo for analysis [Reproducible Research](https://github.com/alizhan11/Reproducible_Research_Project2)
+
+## 1.Synopsis
+
+The goal of assignment is to explore the NOAA Storm Database and explore the effects of weather events on population and economy. The database covers the time period between 1950 and November 2011.
+This analysis investigates which types of whether events most harmful on
+1.Health
+2.Economy
+
+The information about [Data](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+
+## 2.Data Processing
+
+### 2.1.Data Loading
+Download the raw data file and extract the data into data frame. Then, convert it to data.table
+```{r, echo=TRUE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(R.cache)
+fileUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+path <- getwd()
+download.file(fileUrl, file.path(path, "stormData.csv.bz2"), method = "curl")
+stormData <- read.csv("stormData.csv.bz2")
+stormData <- as.data.table(stormData)
+```
+### 2.2.Subsetting Data
+Subset the data by the parameters we are interested. Remove the columns we don't need
+
+```{r selecting columns, echo = TRUE}
+stormCols <- select(stormData, "EVTYPE"
+                    , "FATALITIES"
+                    , "INJURIES"
+                    , "PROPDMG"
+                    , "PROPDMGEXP"
+                    , "CROPDMG"
+                    , "CROPDMGEXP")
+
+#Only use the data where injuries and fatalities occured
+stormTidy <- stormCols[(EVTYPE != "?" & (FATALITIES > 0 | INJURIES > 0 | PROPDMG > 0 | CROPDMG > 0))
+                       , c("EVTYPE"
+                           , "FATALITIES"
+                           , "INJURIES"
+                           , "PROPDMG"
+                           , "PROPDMGEXP"
+                           , "CROPDMG"
+                           , "CROPDMGEXP")]
+```
+
+### 2.3 Exponent Columns into Actual Exponents instead of (-, +, H, K, etc)
+Clean the PROP and CROP exponents to make it clear to calculate the costs
+```{r Converting Exponents, results='hide'}
+# Convert property damage exponents to numeric value
+propDmgNum <- c("\"\"" = 10^0
+                , "-" = 10^0
+                , "+" = 10^0
+                , "0" = 10^0
+                , "2" = 10^2
+                , "3" = 10^3
+                , "4" = 10^4
+                , "5" = 10^5
+                , "6" = 10^6
+                , "7" = 10^7
+                , "h" = 10^2
+                , "H" = 10^2
+                , "K" = 10^3
+                , "m" = 10^6
+                , "M" = 10^6
+                , "B" = 10^9)
+
+# Convert the crop damage exponents to numeric value
+cropDmgNum <- c("\"\"" = 10^0
+                , "?" = 10^0
+                , "0" = 10^0
+                , "1" = 10^1
+                , "k" = 10^3
+                , "K" = 10^3
+                , "m" = 10^6
+                , "M" = 10^6
+                , "B" = 10^9)
+
+
+stormTidy[, PROPDMGEXP := propDmgNum[as.character(stormTidy[, PROPDMGEXP])]]
+stormTidy[is.na(PROPDMGEXP), PROPDMGEXP := 10^0]
+
+stormTidy[, CROPDMGEXP := cropDmgNum[as.character(stormTidy[, CROPDMGEXP])]]
+stormTidy[is.na(CROPDMGEXP), CROPDMGEXP := 10^0]
+
+```
+
+### 2.4 Creating Economic Cost Columns
+```{r EconomicCost}
+stormFinal <- stormTidy[, .(EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, PROPCOST = PROPDMG * PROPDMGEXP, CROPDMG, CROPDMGEXP, CROPCOST = CROPDMG * CROPDMGEXP)]
+```
+
+### 2.5.Calculating Total Property and Crop Costs
+```{r totalCost}
+totalCost <- stormFinal[, .(PROPCOST = sum(PROPCOST), CROPCOST = sum(CROPCOST), TOTALCOST = sum(PROPCOST) + sum(CROPCOST)), by = .(EVTYPE)]
+totalCost <- totalCost[order(desc(TOTALCOST))]
+totalCost <- totalCost[1:10,]
+head(totalCost, 5)
+```
+
+### 2.6.Calculating Total Injuries and Fatalities
+```{r Incidents}
+totalIncidents <- stormFinal[, .(FATALITIES = sum(FATALITIES), INJURIES = sum(INJURIES), TOTALINCIDENTS = sum(FATALITIES) + sum(INJURIES)), by = .(EVTYPE)]
+totalIncidents <- totalIncidents[order(desc(TOTALINCIDENTS)), ]
+totalIncidents <- totalIncidents[1:10, ]
+head(totalIncidents)
+```
+## 3.Results
+
+### 3.1. Most Harmful Events to Population Health
+Melt data.table to make it easier to put it chart
+```{r Melting}
+healthResult <- melt(totalIncidents, id.vars = "EVTYPE", variable.name = "Result")
+head(healthResult, 5)
+```
+
+ 
+```{r Barplot}
+#Create Barplot
+ggplot(healthResult, aes(x = reorder(EVTYPE, value), y = value)) + 
+        geom_bar(stat = 'identity', aes(fill = Result), position = 'dodge') + 
+        labs(title = "Top 10 Harmful Weather Events") + 
+        xlab("Event Type") + 
+        ylab("Frequency") + 
+        theme(axis.text.x = element_text(angle = 45, hjust = 1),
+              plot.title = element_text(hjust = 0.5))
+
+```
+
+### 3.2. Events with Greatest Economical Consequences
+
+Melt the data to put in plot easily
+```{r EconomicalConsequences}
+econCons <- melt(totalCost, id.vars = "EVTYPE", variable.name = "Damage")
+head(econCons, 5)
+```
+```{r Economics Plot}
+ggplot(econCons, aes(x = reorder(EVTYPE, value), y = value)) + 
+        geom_bar(stat = "identity", aes(fill = Damage), position = "dodge") + 
+        labs(title = "Top 10 Weather Events with Greatest Economic Consequences") + 
+        xlab("Event Type") + 
+        ylab("Cost(dollars)") + 
+        theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+              plot.title = element_text(hjust = 0.5))
+```
+
